@@ -891,6 +891,20 @@ class StartupValidator {
         this.addInfo('WS_ALLOWED_TARGETS: not set, using localhost defaults (127.0.0.1:6900/6121/5121)');
         results.WS_ALLOWED_TARGETS = { defined: false, usingDefaults: true };
       }
+
+      const { parseAllowedOrigins, DEFAULT_ALLOWED_ORIGINS } = require('../wsProxy');
+      const origins = parseAllowedOrigins(process.env.WS_ALLOWED_ORIGINS);
+      this.addInfo(`WS_ALLOWED_ORIGINS: ${origins.join(', ')}${process.env.WS_ALLOWED_ORIGINS ? '' : ' (defaults)'}`);
+      results.WS_ALLOWED_ORIGINS = {
+        defined: !!process.env.WS_ALLOWED_ORIGINS,
+        entries: origins,
+        defaults: DEFAULT_ALLOWED_ORIGINS,
+      };
+
+      const rewriteLogin = process.env.WS_REWRITE_LOGIN_PACKET !== 'false';
+      const loginPort = process.env.WS_LOGIN_PORT || '6900';
+      this.addInfo(`WS_REWRITE_LOGIN_PACKET: ${rewriteLogin ? `enabled (0x0888→0x0825 on :${loginPort})` : 'disabled'}`);
+      results.WS_REWRITE_LOGIN_PACKET = { enabled: rewriteLogin, loginPort };
     }
 
     this.validationResults.env = { valid: !hasErrors, variables: results };

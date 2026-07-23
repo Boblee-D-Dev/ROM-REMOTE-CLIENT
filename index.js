@@ -4,7 +4,6 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
-const net = require('net');
 const compression = require('compression');
 const logger = require('./src/utils/logger');
 const StartupValidator = require('./src/validators/startupValidator');
@@ -57,20 +56,33 @@ async function startServer() {
     process.exit(1);
   }
 
-  // CORS setup - allow all localhost variations
+  // CORS: play client (moon-ro.com) fetches GRF assets cross-origin from this host.
+  // Prefer CORS_ORIGINS (comma-separated); always include CLIENT_PUBLIC_URL + local dev.
+  const corsFromEnv = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const corsOrigins = Array.from(new Set([
+    CLIENT_PUBLIC_URL,
+    ...corsFromEnv,
+    'https://moon-ro.com',
+    'https://www.moon-ro.com',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+    'http://localhost:3338',
+    'http://127.0.0.1:3338',
+    'http://robrowser.test',
+    'https://robrowser.test',
+  ].filter(Boolean)));
+
   const corsOptions = {
-    origin: [
-      CLIENT_PUBLIC_URL,
-      'http://localhost:8000',
-      'http://127.0.0.1:8000',
-      'http://localhost:8080',
-      'http://127.0.0.1:8080',
-      'http://localhost:3338',
-      'http://127.0.0.1:3338',
-    ],
+    origin: corsOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
     credentials: true,
   };
+  logger.info(`CORS origins: ${corsOrigins.join(', ')}`);
 
   app.use(cors(corsOptions));
   app.use(express.json());
@@ -152,108 +164,16 @@ async function startServer() {
 
   // Embedded WebSocket proxy (replaces standalone wsproxy)
   if (ENABLE_WSPROXY) {
-    const WebSocket = require('ws');
-    const wss = new WebSocket.Server({ noServer: true });
-
-    // Allowed rAthena targets (security: only explicitly listed game servers).
-    // Override via WS_ALLOWED_TARGETS (comma-separated host:port) for deployments
-    // that cannot use host networking (Kubernetes, Docker Desktop on macOS/Windows,
-    // remote rAthena hosts).  The localhost-only default is preserved when the
-    // variable is absent or empty.
+    const { attachWsProxy } = require('./src/wsProxy');
     const ALLOWED_TARGETS = process.env.WS_ALLOWED_TARGETS
-      ? process.env.WS_ALLOWED_TARGETS.split(',').map(s => s.trim())
+      ? process.env.WS_ALLOWED_TARGETS.split(',').map(s => s.trim()).filter(Boolean)
       : [
           '127.0.0.1:6900',  // Login
           '127.0.0.1:6121',  // Char
           '127.0.0.1:5121',  // Map
         ];
 
-    server.on('upgrade', (req, socket, head) => {
-      if (req.url.startsWith('/ws/')) {
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit('connection', ws, req);
-        });
-      } else {
-        socket.destroy();
-      }
-    });
-
-    wss.on('connection', (ws, req) => {
-      // Strip the /ws/ prefix to get "host:port"
-      // Use slice (not replace) so a misconfigured socketProxy with no /ws path
-      // produces an obviously-invalid target rather than a partial match.
-      const target = req.url.slice('/ws/'.length);
-
-      // Validate target format before allowlist check
-      const colonIdx = target.lastIndexOf(':');
-      const host = colonIdx !== -1 ? target.slice(0, colonIdx) : '';
-      const targetPort = colonIdx !== -1 ? parseInt(target.slice(colonIdx + 1), 10) : NaN;
-
-      if (!host || !Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
-        logger.warn(`WS proxy rejected malformed target: "${target}"`);
-        ws.close();
-        return;
-      }
-
-      logger.info(`WS attempt: ${target}`);
-
-      if (!ALLOWED_TARGETS.includes(target)) {
-        logger.warn(`WS proxy blocked: ${target} (allowed: ${ALLOWED_TARGETS.join(', ')})`);
-        ws.close();
-        return;
-      }
-
-      logger.info(`WS proxy: connecting to ${target}`);
-      const tcp = net.connect(targetPort, host);
-      tcp.setNoDelay(true);
-
-      // Buffer messages received before the TCP connection is established.
-      // roBrowser sends the first game packet synchronously in its onopen handler,
-      // which races with net.connect()'s async 'connect' event. Without buffering,
-      // packets arriving before 'connect' fires are silently dropped.
-      const MAX_PENDING = 64;
-      const pending = [];
-      let connected = false;
-
-      // Single cleanup guard: ensures tcp and ws are torn down exactly once
-      // regardless of which side closes first or whether an error occurs.
-      // Prevents double tcp.end() and misleading "client closed" log on errors.
-      let cleaned = false;
-      const cleanup = (reason) => {
-        if (cleaned) return;
-        cleaned = true;
-        logger.info(`WS proxy: closed ${target} (${reason})`);
-        if (!tcp.destroyed) tcp.destroy();
-        if (ws.readyState === WebSocket.OPEN) ws.close();
-      };
-
-      tcp.on('connect', () => {
-        connected = true;
-        logger.info(`WS proxy: connected  to ${target}`);
-        pending.splice(0).forEach(d => tcp.write(d));
-      });
-
-      ws.on('message', (data) => {
-        if (connected) {
-          tcp.write(data);
-        } else if (pending.length < MAX_PENDING) {
-          pending.push(data);
-        } else {
-          logger.warn(`WS proxy: pending queue full for ${target}, dropping message`);
-        }
-      });
-
-      tcp.on('data', (data) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data);
-      });
-
-      ws.on('close', () => cleanup('client closed'));
-      ws.on('error', (err) => cleanup(`client error: ${err.message}`));
-      tcp.on('close', () => cleanup('server closed'));
-      tcp.on('error', (err) => cleanup(`server error: ${err.message}`));
-    });
-
-    logger.info(`WebSocket proxy enabled on /ws/ (allowed: ${ALLOWED_TARGETS.join(', ')})`);
+    attachWsProxy(server, { allowedTargets: ALLOWED_TARGETS });
   }
 
   server.listen(port, async () => {

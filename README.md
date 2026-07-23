@@ -215,7 +215,25 @@ Switch modes by:
 
 ### Embedded WebSocket Proxy
 
-When `ENABLE_WSPROXY=true`, the server embeds a WebSocket-to-TCP proxy that replaces the standalone [wsproxy](https://github.com/herenow/wsProxy) package.
+## Embedded / Standalone WebSocket Proxy
+
+When `ENABLE_WSPROXY=true`, the asset server embeds a WebSocket-to-TCP proxy.
+
+**Production recommendation:** run the proxy as a separate process so gameplay traffic does not share the Node event loop with GRF asset I/O:
+
+```bash
+# Asset server (.env): ENABLE_WSPROXY=false
+node start-prod.js
+
+# Dedicated WS proxy (reads same .env allowlists)
+# WS_PROXY_PORT=5999
+node start-ws-proxy.js
+```
+
+Or via PM2: `pm2 start ecosystem.config.js` (apps `moon-remote-client` + `moon-ws-proxy`).
+
+Point nginx `proxy.*` upstream at the WS proxy port (default `127.0.0.1:5999`), and `client.*` at the asset port (`3338`).
+
 
 **How it works:**
 1. Browser connects via WebSocket to `ws://localhost:3338/ws/127.0.0.1:6900`

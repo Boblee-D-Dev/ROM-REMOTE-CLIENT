@@ -1,0 +1,42 @@
+module.exports = {
+  apps: [
+    {
+      name: 'moon-remote-client',
+      cwd: __dirname,
+      script: 'start-prod.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1800M',
+      env: {
+        NODE_ENV: 'production',
+        ENABLE_WSPROXY: 'false',
+      },
+      error_file: './logs/pm2-error.log',
+      out_file: './logs/pm2-out.log',
+      merge_logs: true,
+      time: true,
+    },
+    {
+      name: 'moon-ws-proxy',
+      cwd: __dirname,
+      script: 'start-ws-proxy.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '512M',
+      env: {
+        NODE_ENV: 'production',
+        WS_PROXY_PORT: '5999',
+        WS_REWRITE_LOGIN_PACKET: 'true',
+        WS_LOGIN_PORT: '6900',
+      },
+      error_file: './logs/pm2-ws-error.log',
+      out_file: './logs/pm2-ws-out.log',
+      merge_logs: true,
+      time: true,
+    },
+  ],
+};
