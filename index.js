@@ -58,6 +58,7 @@ async function startServer() {
 
   // CORS: play client (moon-ro.com) fetches GRF assets cross-origin from this host.
   // Prefer CORS_ORIGINS (comma-separated); always include CLIENT_PUBLIC_URL + local dev.
+  // Note: Origin is scheme+host+port — http://robrowser.test:8080 ≠ http://robrowser.test
   const corsFromEnv = (process.env.CORS_ORIGINS || '')
     .split(',')
     .map((s) => s.trim())
@@ -75,14 +76,34 @@ async function startServer() {
     'http://127.0.0.1:3338',
     'http://robrowser.test',
     'https://robrowser.test',
+    'http://robrowser.test:8080',
+    'https://robrowser.test:8080',
   ].filter(Boolean)));
 
+  function isAllowedCorsOrigin(origin) {
+    if (!origin) return true;
+    if (corsOrigins.includes(origin)) return true;
+    try {
+      const host = new URL(origin).hostname;
+      // Any port on local robrowser.test (live-server / custom ports)
+      if (host === 'robrowser.test' || host.endsWith('.robrowser.test')) {
+        return true;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return false;
+  }
+
   const corsOptions = {
-    origin: corsOrigins,
+    origin: function (origin, callback) {
+      callback(null, isAllowedCorsOrigin(origin));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
     credentials: true,
   };
-  logger.info(`CORS origins: ${corsOrigins.join(', ')}`);
+  logger.info(`CORS origins (exact): ${corsOrigins.join(', ')}`);
+  logger.info('CORS also allows any port on *.robrowser.test');
 
   app.use(cors(corsOptions));
   app.use(express.json());
@@ -176,9 +197,10 @@ async function startServer() {
     attachWsProxy(server, { allowedTargets: ALLOWED_TARGETS });
   }
 
-  server.listen(port, async () => {
-    logger.info(`Server ready on http://localhost:${port}` +
-      (ENABLE_STATIC_SERVE ? ` | Game: http://localhost:${port}/applications/pwa/index.html` : '') +
+  server.listen(port, process.env.HOST || '127.0.0.1', async () => {
+    const host = process.env.HOST || '127.0.0.1';
+    logger.info(`Server ready on http://${host}:${port}` +
+      (ENABLE_STATIC_SERVE ? ` | Game: http://${host}:${port}/applications/pwa/index.html` : '') +
       (ENABLE_WSPROXY ? ` | WS Proxy: /ws/` : ''));
 
     // Cache warm-up (runs after server is ready, non-blocking)

@@ -12,6 +12,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         ENABLE_WSPROXY: 'false',
+        HOST: '127.0.0.1',
       },
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',
@@ -32,6 +33,7 @@ module.exports = {
         WS_PROXY_PORT: '5999',
         WS_REWRITE_LOGIN_PACKET: 'true',
         WS_LOGIN_PORT: '6900',
+        HOST: '127.0.0.1',
       },
       error_file: './logs/pm2-ws-error.log',
       out_file: './logs/pm2-ws-out.log',

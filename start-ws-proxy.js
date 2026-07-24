@@ -52,7 +52,8 @@ const server = http.createServer((req, res) => {
 
 attachWsProxy(server, { allowedTargets: ALLOWED_TARGETS, metrics });
 
-server.listen(port, () => {
-  logger.info(`WS proxy standalone listening on http://127.0.0.1:${port} (WS path /ws/)`);
+server.listen(port, process.env.HOST || '127.0.0.1', () => {
+  const host = process.env.HOST || '127.0.0.1';
+  logger.info(`WS proxy standalone listening on http://${host}:${port} (WS path /ws/)`);
   logger.info(`WS metrics: writing ${metrics.historyPath} every ${process.env.WS_METRICS_INTERVAL_MS || '60000'}ms (SSH only)`);
 });
