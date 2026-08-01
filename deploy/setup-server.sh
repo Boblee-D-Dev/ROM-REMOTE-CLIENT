@@ -3,13 +3,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY_ENV="${1:-$SCRIPT_DIR/deploy.env}"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
-load_deploy_env "$SCRIPT_DIR/deploy.env"
+load_deploy_env "$DEPLOY_ENV"
 
 require_cmd ssh
 
-log_step "Bootstrap on $SSH_TARGET"
+log_step "Bootstrap $DEPLOY_ROLE on $SSH_TARGET"
 
 ssh_run "bash -s" <<REMOTE
 set -euo pipefail
@@ -36,8 +37,8 @@ if ! command -v node >/dev/null; then
 fi
 REMOTE
 
-"$SCRIPT_DIR/issue-ssl.sh"
-"$SCRIPT_DIR/sync-nginx.sh"
+DEPLOY_ENV="$DEPLOY_ENV" "$SCRIPT_DIR/issue-ssl.sh"
+DEPLOY_ENV="$DEPLOY_ENV" "$SCRIPT_DIR/sync-nginx.sh"
 
-log_step "Server bootstrap complete"
-echo "Next: ./deploy/deploy.sh"
+log_step "Server bootstrap complete ($DEPLOY_ROLE)"
+echo "Next: ./deploy/deploy-${DEPLOY_ROLE}.sh"

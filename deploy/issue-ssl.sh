@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Issue or renew Let's Encrypt certs for client + proxy domains (certbot webroot).
+# Issue or renew Let's Encrypt certs via certbot (webroot challenge).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY_ENV="${DEPLOY_ENV:-$SCRIPT_DIR/deploy.env}"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
-load_deploy_env "$SCRIPT_DIR/deploy.env"
+load_deploy_env "$DEPLOY_ENV"
 
 if [[ -z "$CERTBOT_EMAIL" ]]; then
-	echo "ERROR: set CERTBOT_EMAIL in deploy/deploy.env" >&2
+	echo "ERROR: set CERTBOT_EMAIL in deploy env file" >&2
 	exit 1
 fi
 
