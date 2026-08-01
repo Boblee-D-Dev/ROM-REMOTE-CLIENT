@@ -12,8 +12,6 @@ const PACKET_CA_SSO_LOGIN_REQ_ROBROWSER = 0x0888;
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://moon-ro.com',
   'https://www.moon-ro.com',
-  '127.0.0.1',
-  'localhost',
   'robrowser.test',
 ];
 

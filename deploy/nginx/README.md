@@ -1,21 +1,12 @@
 # nginx — Moon Remote Client + WS Proxy
 
-Synced from **rom-web** on 2026-07-23.
-
 | File | Live path | Upstream |
 |------|-----------|----------|
-| [`client.moon-ro.com.conf`](client.moon-ro.com.conf) | `/etc/nginx/sites-available/client.moon-ro.com` | `127.0.0.1:3338` (GRF / assets) |
-| [`proxy.moon-ro.com.conf`](proxy.moon-ro.com.conf) | `/etc/nginx/sites-available/proxy.moon-ro.com` | `127.0.0.1:5999` (WSS → TCP) |
+| [`client.moon-ro.com.conf`](client.moon-ro.com.conf) | `/etc/nginx/sites-available/client.moon-ro.com` | `127.0.0.1:3338` |
+| [`proxy.moon-ro.com.conf`](proxy.moon-ro.com.conf) | `/etc/nginx/sites-available/proxy.moon-ro.com` | `127.0.0.1:5999` |
 
-## Apply on a server
+SSL: **certbot** — both domains share `/etc/letsencrypt/live/client.moon-ro.com/`.
 
-```bash
-# example
-scp deploy/nginx/client.moon-ro.com.conf root@HOST:/etc/nginx/sites-available/client.moon-ro.com
-scp deploy/nginx/proxy.moon-ro.com.conf  root@HOST:/etc/nginx/sites-available/proxy.moon-ro.com
-ssh root@HOST 'ln -sf /etc/nginx/sites-available/client.moon-ro.com /etc/nginx/sites-enabled/
-               ln -sf /etc/nginx/sites-available/proxy.moon-ro.com  /etc/nginx/sites-enabled/
-               nginx -t && systemctl reload nginx'
-```
+Apply: `./deploy/deploy.sh` or `./deploy/sync-nginx.sh`.
 
-Adjust SSL cert paths / upstream ports per host. Certbot-managed blocks are kept as on production.
+Adjust upstream ports in `deploy/deploy.env` (`CLIENT_PORT`, `PROXY_PORT`) if you change Node bindings — update these nginx files to match.
