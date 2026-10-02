@@ -88,7 +88,7 @@ deploy_app_sync() {
 		--exclude deploy/deploy.env --exclude deploy/proxy.env \
 		"$repo_root/" "$SSH_TARGET:$REMOTE_ROOT/"
 
-	scp "$env_path" "$SSH_TARGET:$REMOTE_ROOT/.env"
+	scp "$env_path" "$SSH_TARGET:$REMOTE_ROOT/.env.incoming"
 
 	log_step "Installing dependencies and restarting PM2 ($PM2_APP)"
 	ssh_run "bash -s" <<REMOTE
@@ -97,6 +97,17 @@ export NVM_DIR="\$HOME/.nvm"
 [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
 cd '$REMOTE_ROOT'
 mkdir -p logs
+# Keep Turnstile secret on proxy if local deploy env omits it (avoid wiping production)
+if [ -f .env.incoming ]; then
+  if ! grep -qE '^TURNSTILE_SECRET_KEY=.+' .env.incoming 2>/dev/null; then
+    if [ -f .env ] && grep -qE '^TURNSTILE_SECRET_KEY=.+' .env; then
+      grep '^TURNSTILE_SECRET_KEY=' .env | head -1 >> .env.incoming
+      grep -q '^WS_TURNSTILE_ENFORCE=' .env.incoming || echo 'WS_TURNSTILE_ENFORCE=true' >> .env.incoming
+      grep -q '^WS_TURNSTILE_LOGIN_ONLY=' .env.incoming || echo 'WS_TURNSTILE_LOGIN_ONLY=true' >> .env.incoming
+    fi
+  fi
+  mv .env.incoming .env
+fi
 NPM_FLAGS='--production=false'
 if [ '$PM2_APP' = 'moon-ws-proxy' ]; then
   NPM_FLAGS="\$NPM_FLAGS --ignore-scripts"

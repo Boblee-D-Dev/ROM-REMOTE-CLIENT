@@ -26,7 +26,10 @@ require('dotenv').config();
 
 const http = require('http');
 const logger = require('./src/utils/logger');
-const { attachWsProxy, createMetrics } = require('./src/wsProxy');
+const { attachWsProxy, createMetrics, parseAllowedOrigins } = require('./src/wsProxy');
+const { clientHintResponseHeaders, readClientHintHeaders } = require('./src/wsProxyClientHints');
+const { rememberClientHints } = require('./src/wsProxyClientHintCache');
+const { resolveClientIp } = require('./src/wsProxyTurnstile');
 
 const port = parseInt(process.env.WS_PROXY_PORT || process.env.PORT || '5999', 10);
 
@@ -35,18 +38,52 @@ const ALLOWED_TARGETS = process.env.WS_ALLOWED_TARGETS
   : ['127.0.0.1:6900', '127.0.0.1:6121', '127.0.0.1:5121'];
 
 const metrics = createMetrics();
+const HEALTH_CORS_ORIGINS = parseAllowedOrigins(process.env.WS_ALLOWED_ORIGINS);
+
+function corsOriginForRequest(req) {
+  const origin = req.headers.origin;
+  if (!origin || typeof origin !== 'string') return null;
+  for (const allowed of HEALTH_CORS_ORIGINS) {
+    if (allowed.includes('://') && origin.toLowerCase() === allowed.toLowerCase()) return origin;
+    try {
+      const o = new URL(origin);
+      if (o.hostname.toLowerCase() === allowed.toLowerCase()) return origin;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
 
 const server = http.createServer((req, res) => {
   const url = (req.url || '').split('?')[0];
 
   // Minimal health only — OBT metrics are file/log based (SSH), not a public API.
   if (url === '/api/health' || url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const cors = corsOriginForRequest(req);
+    const headers = clientHintResponseHeaders({
+      'Content-Type': 'application/json',
+      ...(cors ? { 'Access-Control-Allow-Origin': cors, Vary: 'Origin' } : {}),
+    });
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        ...headers,
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      });
+      res.end();
+      return;
+    }
+    if (req.method === 'GET') {
+      const clientIp = resolveClientIp(req);
+      rememberClientHints(clientIp, readClientHintHeaders(req));
+    }
+    res.writeHead(200, headers);
     res.end(JSON.stringify({ ok: true, service: 'moon-ws-proxy' }));
     return;
   }
 
-  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.writeHead(404, clientHintResponseHeaders({ 'Content-Type': 'text/plain' }));
   res.end('moon-ws-proxy: use WebSocket /ws/<host>:<port>\n');
 });
 

@@ -10,6 +10,9 @@ const {
   extractTurnstileToken,
   parseWsTargetPath,
 } = require('./wsProxyTurnstile');
+const { createLoginAuditLogger } = require('./wsProxyLoginAudit');
+const { evaluateClientHints } = require('./wsProxyClientHints');
+const { resolveClientHints } = require('./wsProxyClientHintCache');
 
 /** Official SSO login packet ID expected by rAthena */
 const PACKET_CA_SSO_LOGIN_REQ = 0x0825;
@@ -131,6 +134,9 @@ function attachWsProxy(server, options = {}) {
   const LOGIN_PORT = options.loginPort || parseInt(process.env.WS_LOGIN_PORT || '6900', 10);
 
   const metrics = options.metrics || createMetrics({ loginPort: LOGIN_PORT });
+  const loginAudit =
+    options.loginAudit ||
+    createLoginAuditLogger({ auditPath: process.env.WS_LOGIN_AUDIT_PATH });
   const wss = new WebSocket.Server({ noServer: true });
 
   function rejectUpgrade(socket, statusLine, logMsg) {
@@ -158,6 +164,29 @@ function attachWsProxy(server, options = {}) {
     }
 
     const { target, targetPort } = parsedTarget;
+    const upgradeClientIp = resolveClientIp(req);
+    const clientHints = resolveClientHints(req, upgradeClientIp);
+
+    const chResult = evaluateClientHints(
+      req,
+      {
+        targetPort,
+        loginPort: LOGIN_PORT,
+        origin: origin || '',
+      },
+      clientHints
+    );
+    if (chResult.block) {
+      if (typeof metrics.recordBlockedDesktopCh === 'function') {
+        metrics.recordBlockedDesktopCh(chResult.reason || 'desktop_ch');
+      }
+      rejectUpgrade(
+        socket,
+        'HTTP/1.1 403 Forbidden',
+        `WS proxy blocked client-hints target=${target} reason=${chResult.reason || 'desktop_ch'} mobile=${chResult.hints.mobile || '(none)'}`
+      );
+      return;
+    }
 
     const runVerify = async () => {
       if (!shouldEnforceTurnstile(targetPort, LOGIN_PORT)) {
@@ -230,6 +259,21 @@ function attachWsProxy(server, options = {}) {
     const metricId = metrics.trackConnect(req, target, targetPort);
     const isLoginTarget = targetPort === LOGIN_PORT;
     const shouldRewrite = REWRITE_LOGIN && isLoginTarget;
+    const clientIp = resolveClientIp(req);
+    const turnstileEnforced = shouldEnforceTurnstile(targetPort, LOGIN_PORT);
+    let loginAuditLogged = false;
+    const auditCtx = () => {
+      const ch = resolveClientHints(req, clientIp);
+      return {
+        alreadyLogged: loginAuditLogged,
+        clientIp,
+        origin: req.headers.origin,
+        ws_target: target,
+        turnstile_enforced: turnstileEnforced,
+        sec_ch_mobile: ch.mobile || null,
+        sec_ch_platform: ch.platform || null,
+      };
+    };
 
     logger.info(`WS proxy: connecting to ${target}`);
     const tcp = net.connect(targetPort, host);
@@ -250,6 +294,11 @@ function attachWsProxy(server, options = {}) {
     };
 
     const toServer = (data) => {
+      if (isLoginTarget && loginAudit.enabled) {
+        if (loginAudit.tryLogLoginPacket(data, auditCtx())) {
+          loginAuditLogged = true;
+        }
+      }
       const payload = shouldRewrite ? rewriteLoginPacket(data) : (Buffer.isBuffer(data) ? data : Buffer.from(data));
       if (connected) {
         tcp.write(payload);
@@ -295,8 +344,13 @@ function attachWsProxy(server, options = {}) {
     logger.info('WS proxy turnstile: secret not set (verification disabled)');
   }
   logger.info(`WS metrics history: ${metrics.historyPath}`);
+  if (loginAudit.enabled) {
+    logger.info(`WS login audit: enabled path=${loginAudit.auditPath}`);
+  } else {
+    logger.info('WS login audit: disabled (set WS_LOGIN_AUDIT_PATH or WS_LOGIN_AUDIT=1)');
+  }
 
-  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics };
+  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics, loginAudit };
 }
 
 module.exports = {
@@ -306,6 +360,7 @@ module.exports = {
   parseWsTargetPath,
   rewriteLoginPacket,
   createMetrics,
+  createLoginAuditLogger,
   PACKET_CA_SSO_LOGIN_REQ,
   PACKET_CA_SSO_LOGIN_REQ_ROBROWSER,
   DEFAULT_ALLOWED_ORIGINS,
