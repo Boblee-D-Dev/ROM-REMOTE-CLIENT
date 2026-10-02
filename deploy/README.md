@@ -22,7 +22,7 @@ cp .env.example .env.production
 
 ```bash
 cp deploy/proxy.env.example deploy/proxy.env
-cp .env.proxy.production.example .env.proxy.production
+cp .env.proxy.example .env.proxy.production
 # Cloudflare: point proxy.moon-ro.com A → rom-server IP
 ./deploy/deploy-proxy.sh --setup    # after DNS propagates
 ./deploy/deploy-proxy.sh

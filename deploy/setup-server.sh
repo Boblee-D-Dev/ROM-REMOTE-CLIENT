@@ -40,5 +40,10 @@ REMOTE
 DEPLOY_ENV="$DEPLOY_ENV" "$SCRIPT_DIR/issue-ssl.sh"
 DEPLOY_ENV="$DEPLOY_ENV" "$SCRIPT_DIR/sync-nginx.sh"
 
+if [[ "${DEPLOY_ROLE:-}" == "proxy" ]] && [[ -x "$SCRIPT_DIR/setup-security.sh" ]]; then
+	log_step "Proxy security (ufw, fail2ban, MariaDB localhost bind)"
+	ssh_run "bash -s" <"$SCRIPT_DIR/setup-security.sh"
+fi
+
 log_step "Server bootstrap complete ($DEPLOY_ROLE)"
 echo "Next: ./deploy/deploy-${DEPLOY_ROLE}.sh"

@@ -14,8 +14,11 @@
 package-lock.json
 yarn.lock
 
-# Environment
+# Environment — commit only *.example templates (no secrets)
 .env
+.env.*
+!.env.example
+!.env.proxy.example
 
 # Generated files
 grf-path-encoding-report.json

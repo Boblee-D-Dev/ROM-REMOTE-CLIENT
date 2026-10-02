@@ -3,6 +3,13 @@
 const net = require('net');
 const logger = require('./utils/logger');
 const { createMetrics } = require('./wsProxyMetrics');
+const {
+  shouldEnforceTurnstile,
+  verifyTurnstileToken,
+  resolveClientIp,
+  extractTurnstileToken,
+  parseWsTargetPath,
+} = require('./wsProxyTurnstile');
 
 /** Official SSO login packet ID expected by rAthena */
 const PACKET_CA_SSO_LOGIN_REQ = 0x0825;
@@ -126,6 +133,12 @@ function attachWsProxy(server, options = {}) {
   const metrics = options.metrics || createMetrics({ loginPort: LOGIN_PORT });
   const wss = new WebSocket.Server({ noServer: true });
 
+  function rejectUpgrade(socket, statusLine, logMsg) {
+    logger.warn(logMsg);
+    socket.write(`${statusLine}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+  }
+
   server.on('upgrade', (req, socket, head) => {
     if (!req.url || !req.url.startsWith('/ws/')) {
       socket.destroy();
@@ -134,28 +147,64 @@ function attachWsProxy(server, options = {}) {
 
     const origin = req.headers.origin;
     if (!isAllowedOrigin(origin, ALLOWED_ORIGINS)) {
-      logger.warn(`WS proxy blocked origin: ${origin || '(none)'}`);
-      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      socket.destroy();
+      rejectUpgrade(socket, 'HTTP/1.1 403 Forbidden', `WS proxy blocked origin: ${origin || '(none)'}`);
       return;
     }
 
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
+    const parsedTarget = parseWsTargetPath(req.url);
+    if (!parsedTarget) {
+      rejectUpgrade(socket, 'HTTP/1.1 400 Bad Request', `WS proxy rejected malformed upgrade url: ${req.url}`);
+      return;
+    }
+
+    const { target, targetPort } = parsedTarget;
+
+    const runVerify = async () => {
+      if (!shouldEnforceTurnstile(targetPort, LOGIN_PORT)) {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          wss.emit('connection', ws, req);
+        });
+        return;
+      }
+
+      const token = extractTurnstileToken(req);
+      const clientIp = resolveClientIp(req);
+      const result = await verifyTurnstileToken(token, clientIp);
+      if (!result.ok) {
+        if (typeof metrics.recordBlockedTurnstile === 'function') {
+          metrics.recordBlockedTurnstile(result.reason || 'blocked');
+        }
+        rejectUpgrade(
+          socket,
+          'HTTP/1.1 403 Forbidden',
+          `WS proxy blocked turnstile target=${target} reason=${result.reason || 'unknown'}`
+        );
+        return;
+      }
+
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    };
+
+    runVerify().catch((err) => {
+      rejectUpgrade(
+        socket,
+        'HTTP/1.1 503 Service Unavailable',
+        `WS proxy turnstile verify error: ${err.message}`
+      );
     });
   });
 
   wss.on('connection', (ws, req) => {
-    const target = req.url.slice('/ws/'.length);
-    const colonIdx = target.lastIndexOf(':');
-    const host = colonIdx !== -1 ? target.slice(0, colonIdx) : '';
-    const targetPort = colonIdx !== -1 ? parseInt(target.slice(colonIdx + 1), 10) : NaN;
-
-    if (!host || !Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
-      logger.warn(`WS proxy rejected malformed target: "${target}"`);
+    const parsedTarget = parseWsTargetPath(req.url);
+    if (!parsedTarget) {
+      logger.warn(`WS proxy rejected malformed target url: "${req.url || ''}"`);
       ws.close();
       return;
     }
+
+    const { host, targetPort, target } = parsedTarget;
 
     logger.info(`WS attempt: ${target} origin=${req.headers.origin || '(none)'}`);
 
@@ -236,6 +285,15 @@ function attachWsProxy(server, options = {}) {
       `WS proxy login rewrite: 0x${PACKET_CA_SSO_LOGIN_REQ_ROBROWSER.toString(16)} → 0x${PACKET_CA_SSO_LOGIN_REQ.toString(16)} on port ${LOGIN_PORT}`
     );
   }
+  if (process.env.TURNSTILE_SECRET_KEY) {
+    const loginOnly = process.env.WS_TURNSTILE_LOGIN_ONLY !== 'false';
+    const enforce = process.env.WS_TURNSTILE_ENFORCE !== 'false';
+    logger.info(
+      `WS proxy turnstile: secret=set enforce=${enforce} loginPortOnly=${loginOnly} loginPort=${LOGIN_PORT}`
+    );
+  } else {
+    logger.info('WS proxy turnstile: secret not set (verification disabled)');
+  }
   logger.info(`WS metrics history: ${metrics.historyPath}`);
 
   return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics };
@@ -245,6 +303,7 @@ module.exports = {
   attachWsProxy,
   isAllowedOrigin,
   parseAllowedOrigins,
+  parseWsTargetPath,
   rewriteLoginPacket,
   createMetrics,
   PACKET_CA_SSO_LOGIN_REQ,

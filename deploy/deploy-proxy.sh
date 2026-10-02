@@ -3,7 +3,7 @@
 #
 # Usage:
 #   cp deploy/proxy.env.example deploy/proxy.env
-#   cp .env.proxy.production.example .env.proxy.production
+#   cp .env.proxy.example .env.proxy.production
 #   # Point proxy.moon-ro.com DNS → rom-server, then:
 #   ./deploy/deploy-proxy.sh --setup
 #   ./deploy/deploy-proxy.sh
@@ -36,7 +36,7 @@ load_deploy_env "$DEPLOY_ENV"
 
 APP_ENV_PATH="$repo_root/$ENV_FILE"
 [[ -f "$APP_ENV_PATH" ]] || {
-	echo "ERROR: missing $APP_ENV_PATH (copy from .env.proxy.production.example)" >&2
+	echo "ERROR: missing $APP_ENV_PATH (copy from .env.proxy.example)" >&2
 	exit 1
 }
 

@@ -9,7 +9,7 @@
  *   node start-ws-proxy.js
  *   # or via PM2 (see ecosystem / deploy config)
  *
- * Env (see .env.example):
+ * Env (see .env.proxy.example — copy to .env locally or .env.proxy.production on VPS):
  *   WS_PROXY_PORT / PORT          listen port (default 5999)
  *   WS_ALLOWED_TARGETS            host:port allowlist
  *   WS_ALLOWED_ORIGINS            browser Origin allowlist

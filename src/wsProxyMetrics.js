@@ -69,6 +69,7 @@ function createMetrics(options = {}) {
     mobileConnects: 0,
     desktopConnects: 0,
     unknownConnects: 0,
+    blockedTurnstile: 0,
   };
 
   let maxAllTime = emptyMax();
@@ -236,6 +237,11 @@ function createMetrics(options = {}) {
     );
   }
 
+  function recordBlockedTurnstile(reason) {
+    totals.blockedTurnstile += 1;
+    logger.info(`WS metrics: blocked_turnstile reason=${reason || 'unknown'} total=${totals.blockedTurnstile}`);
+  }
+
   function appendHistory(snap) {
     try {
       fs.mkdirSync(path.dirname(historyPath), { recursive: true });
@@ -280,6 +286,7 @@ function createMetrics(options = {}) {
   return {
     trackConnect,
     trackDisconnect,
+    recordBlockedTurnstile,
     snapshot,
     classifyClient,
     startPeriodicLog,
