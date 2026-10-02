@@ -47,7 +47,7 @@ server {
     set_real_ip_from 2c0f:f248::/32;
     real_ip_header CF-Connecting-IP;
 
-    add_header Accept-CH "Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-CH-UA" always;
+    add_header Accept-CH "Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-CH-UA, Sec-CH-UA-Model, Sec-CH-UA-Platform-Version" always;
     add_header Critical-CH "Sec-CH-UA-Mobile" always;
 
     location / {

@@ -38,6 +38,9 @@ function readClientHintHeaders(req) {
     mobile: pick('sec-ch-ua-mobile'),
     platform: pick('sec-ch-ua-platform'),
     ua: pick('sec-ch-ua'),
+    model: pick('sec-ch-ua-model'),
+    platformVersion: pick('sec-ch-ua-platform-version'),
+    arch: pick('sec-ch-ua-arch'),
   };
 }
 
@@ -49,7 +52,7 @@ function readClientHintHeaders(req) {
 function isTabletUserAgent(ua) {
   if (!ua || typeof ua !== 'string') return false;
   if (/iPad/i.test(ua)) return true;
-  if (/Macintosh/i.test(ua) && /Mobile\/[0-9A-F]+ Safari/i.test(ua)) return true;
+  if (/Macintosh/i.test(ua) && /Mobile\/[\w]+ Safari/i.test(ua)) return true;
   return false;
 }
 
@@ -139,7 +142,8 @@ function evaluateClientHints(req, ctx, hintsOverride) {
   return { block: false, reason: 'unknown_ch', hints };
 }
 
-const ACCEPT_CH_VALUE = 'Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-CH-UA';
+const ACCEPT_CH_VALUE =
+  'Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-CH-UA, Sec-CH-UA-Model, Sec-CH-UA-Platform-Version';
 
 function clientHintResponseHeaders(extra) {
   return {

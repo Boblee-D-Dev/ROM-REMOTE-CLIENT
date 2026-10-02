@@ -97,6 +97,10 @@ function createLoginAuditLogger(options = {}) {
 	 * @param {boolean} ctx.turnstile_enforced
 	 * @param {string|null|undefined} ctx.sec_ch_mobile
 	 * @param {string|null|undefined} ctx.sec_ch_platform
+	 * @param {string|null|undefined} ctx.sec_ch_ua
+	 * @param {string|null|undefined} ctx.sec_ch_ua_model
+	 * @param {string|null|undefined} ctx.sec_ch_ua_platform_version
+	 * @param {string|null|undefined} ctx.user_agent_snip
    * @returns {boolean} true if logged this call
    */
   function tryLogLoginPacket(data, ctx) {
@@ -117,6 +121,10 @@ function createLoginAuditLogger(options = {}) {
       turnstile_enforced: !!ctx.turnstile_enforced,
       sec_ch_mobile: ctx.sec_ch_mobile || null,
       sec_ch_platform: ctx.sec_ch_platform || null,
+      sec_ch_ua: ctx.sec_ch_ua || null,
+      sec_ch_ua_model: ctx.sec_ch_ua_model || null,
+      sec_ch_ua_platform_version: ctx.sec_ch_ua_platform_version || null,
+      user_agent_snip: ctx.user_agent_snip || null,
       ws_target: ctx.ws_target,
       ...ipFields,
     });

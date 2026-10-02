@@ -20,6 +20,9 @@ function rememberClientHints(clientIp, hints) {
     mobile,
     platform,
     ua,
+    model: hints.model || '',
+    platformVersion: hints.platformVersion || '',
+    arch: hints.arch || '',
     expires: Date.now() + TTL_MS,
   });
 }
@@ -51,6 +54,9 @@ function resolveClientHints(req, clientIp) {
     mobile: fromUpgrade.mobile || fromQuery?.mobile || cached?.mobile || fromUa || '',
     platform: fromUpgrade.platform || fromQuery?.platform || cached?.platform || '',
     ua: fromUpgrade.ua || fromQuery?.ua || cached?.ua || '',
+    model: fromUpgrade.model || cached?.model || '',
+    platformVersion: fromUpgrade.platformVersion || cached?.platformVersion || '',
+    arch: fromUpgrade.arch || cached?.arch || '',
   };
 }
 

@@ -71,6 +71,9 @@ function createMetrics(options = {}) {
     unknownConnects: 0,
     blockedTurnstile: 0,
     blockedDesktopCh: 0,
+    blockedEmulatorUa: 0,
+    blockedDesktopUa: 0,
+    blockedRateLimit: 0,
   };
 
   let maxAllTime = emptyMax();
@@ -250,6 +253,27 @@ function createMetrics(options = {}) {
     );
   }
 
+  function recordBlockedEmulatorUa(reason) {
+    totals.blockedEmulatorUa += 1;
+    logger.info(
+      `WS metrics: blocked_emulator_ua reason=${reason || 'unknown'} total=${totals.blockedEmulatorUa}`
+    );
+  }
+
+  function recordBlockedDesktopUa(reason) {
+    totals.blockedDesktopUa += 1;
+    logger.info(
+      `WS metrics: blocked_desktop_ua reason=${reason || 'unknown'} total=${totals.blockedDesktopUa}`
+    );
+  }
+
+  function recordBlockedRateLimit(reason) {
+    totals.blockedRateLimit += 1;
+    logger.info(
+      `WS metrics: blocked_rate_limit reason=${reason || 'unknown'} total=${totals.blockedRateLimit}`
+    );
+  }
+
   function appendHistory(snap) {
     try {
       fs.mkdirSync(path.dirname(historyPath), { recursive: true });
@@ -296,6 +320,9 @@ function createMetrics(options = {}) {
     trackDisconnect,
     recordBlockedTurnstile,
     recordBlockedDesktopCh,
+    recordBlockedEmulatorUa,
+    recordBlockedDesktopUa,
+    recordBlockedRateLimit,
     snapshot,
     classifyClient,
     startPeriodicLog,

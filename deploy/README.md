@@ -32,7 +32,7 @@ Proxy forwards to **rom-server-prd** (`43.228.86.182:6900/6121/5121`) — see `.
 
 ### Login audit (JSONL)
 
-When `WS_LOGIN_AUDIT=1` or `WS_LOGIN_AUDIT_PATH` is set, wsProxy appends one line per **login-port** SSO packet (`0x0888` / `0x0825`): UTC timestamp, `client_ipv4`, `game_id`, `origin`, `turnstile_enforced`, optional `sec_ch_mobile` / `sec_ch_platform`, `ws_target`. **Never** logs password, Turnstile token, or MAC from the packet body.
+When `WS_LOGIN_AUDIT=1` or `WS_LOGIN_AUDIT_PATH` is set, wsProxy appends one line per **login-port** SSO packet (`0x0888` / `0x0825`): UTC timestamp, `client_ipv4`, `game_id`, `origin`, `turnstile_enforced`, optional `sec_ch_mobile` / `sec_ch_platform` / `sec_ch_ua` / `sec_ch_ua_model` / `sec_ch_ua_platform_version`, truncated `user_agent_snip`, `ws_target`. **Never** logs password, Turnstile token, or MAC from the packet body.
 
 Default path: `./logs/ws-login-audit.jsonl` (under app dir on VPS, e.g. `/var/www/moon-ws-proxy/logs/`).
 
@@ -53,6 +53,14 @@ JSONL field `turnstile_enforced` = Turnstile was required on this login-port con
 - **Enforce:** `WS_CLIENT_HINTS_ENFORCE=true`, `WS_CLIENT_HINTS_LOGIN_ONLY=true`, `WS_CLIENT_HINTS_REQUIRE=true` — blocks `?0` on login WSS; requires `ch-mobile` query (official play) or mobile UA fallback; iPad/tablet exception.
 - **Metrics:** PM2 log lines `blocked_desktop_ch` (403 before Turnstile verify).
 - **Play client:** `WebSocket.js` GET `https://proxy.moon-ro.com/health` once per session before login WSS (play **1.3.78+**).
+
+### UA gate (#5) + emulator UA + rate limit (#9)
+
+- **Order on login WSS:** Client Hints → **UA gate** → **rate limit** → Turnstile → TCP.
+- **Emulator UA:** `WS_UA_EMULATOR_BLOCK=true` (default) — LDPlayer / BlueStacks / sdk_gphone / x86 Android UA → **403** · metric `blocked_emulator_ua`.
+- **Desktop UA:** `WS_UA_DESKTOP_BLOCK=true` — Windows/macOS/Linux desktop UA on login WSS (incl. `?1` + desktop UA spoof) → **403** · metric `blocked_desktop_ua`.
+- **Rate limit:** `WS_RATE_LIMIT_LOGIN=true` — max **40** login upgrades / **60s** / client IP (tune via env) → **429** · metric `blocked_rate_limit`.
+- **Accept-CH:** nginx + `/health` request `Sec-CH-UA-Model` for audit (**EMU-12**).
 
 ## After moving proxy DNS
 

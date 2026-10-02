@@ -13,6 +13,8 @@ const {
 const { createLoginAuditLogger } = require('./wsProxyLoginAudit');
 const { evaluateClientHints } = require('./wsProxyClientHints');
 const { resolveClientHints } = require('./wsProxyClientHintCache');
+const { evaluateUserAgentGate } = require('./wsProxyUserAgent');
+const { createRateLimiter, shouldRateLimitLogin } = require('./wsProxyRateLimit');
 
 /** Official SSO login packet ID expected by rAthena */
 const PACKET_CA_SSO_LOGIN_REQ = 0x0825;
@@ -137,6 +139,7 @@ function attachWsProxy(server, options = {}) {
   const loginAudit =
     options.loginAudit ||
     createLoginAuditLogger({ auditPath: process.env.WS_LOGIN_AUDIT_PATH });
+  const loginRateLimit = options.loginRateLimit || createRateLimiter();
   const wss = new WebSocket.Server({ noServer: true });
 
   function rejectUpgrade(socket, statusLine, logMsg) {
@@ -186,6 +189,41 @@ function attachWsProxy(server, options = {}) {
         `WS proxy blocked client-hints target=${target} reason=${chResult.reason || 'desktop_ch'} mobile=${chResult.hints.mobile || '(none)'}`
       );
       return;
+    }
+
+    const uaResult = evaluateUserAgentGate(
+      req,
+      { targetPort, loginPort: LOGIN_PORT, origin: origin || '' },
+      clientHints
+    );
+    if (uaResult.block) {
+      const reason = uaResult.reason || 'ua_gate';
+      if (reason.startsWith('desktop_ua') && typeof metrics.recordBlockedDesktopUa === 'function') {
+        metrics.recordBlockedDesktopUa(reason);
+      } else if (typeof metrics.recordBlockedEmulatorUa === 'function') {
+        metrics.recordBlockedEmulatorUa(reason);
+      }
+      rejectUpgrade(
+        socket,
+        'HTTP/1.1 403 Forbidden',
+        `WS proxy blocked ua target=${target} reason=${reason} ua=${(req.headers['user-agent'] || '').slice(0, 120)}`
+      );
+      return;
+    }
+
+    if (shouldRateLimitLogin(targetPort, LOGIN_PORT)) {
+      const rl = loginRateLimit.check(upgradeClientIp || 'unknown');
+      if (!rl.allowed) {
+        if (typeof metrics.recordBlockedRateLimit === 'function') {
+          metrics.recordBlockedRateLimit('login_upgrade');
+        }
+        rejectUpgrade(
+          socket,
+          'HTTP/1.1 429 Too Many Requests',
+          `WS proxy rate limit ip=${upgradeClientIp} count=${rl.count} limit=${rl.limit} target=${target}`
+        );
+        return;
+      }
     }
 
     const runVerify = async () => {
@@ -243,19 +281,6 @@ function attachWsProxy(server, options = {}) {
       return;
     }
 
-    // Soft block common emulator UAs (client gate is primary). Allow robrowser.test for local dev.
-    const origin = req.headers.origin || '';
-    const ua = req.headers['user-agent'] || '';
-    const isDevOrigin = /robrowser\.test/i.test(origin);
-    if (
-      !isDevOrigin &&
-      /Android SDK built for|sdk_gphone|Emulator|Genymotion|goldfish|ranchu|BlueStacks|LDPlayer|Nox/i.test(ua)
-    ) {
-      logger.warn(`WS proxy blocked emulator UA origin=${origin}`);
-      ws.close();
-      return;
-    }
-
     const metricId = metrics.trackConnect(req, target, targetPort);
     const isLoginTarget = targetPort === LOGIN_PORT;
     const shouldRewrite = REWRITE_LOGIN && isLoginTarget;
@@ -264,6 +289,7 @@ function attachWsProxy(server, options = {}) {
     let loginAuditLogged = false;
     const auditCtx = () => {
       const ch = resolveClientHints(req, clientIp);
+      const uaHeader = (req.headers && req.headers['user-agent']) || '';
       return {
         alreadyLogged: loginAuditLogged,
         clientIp,
@@ -272,6 +298,10 @@ function attachWsProxy(server, options = {}) {
         turnstile_enforced: turnstileEnforced,
         sec_ch_mobile: ch.mobile || null,
         sec_ch_platform: ch.platform || null,
+        sec_ch_ua: ch.ua || null,
+        sec_ch_ua_model: ch.model || null,
+        sec_ch_ua_platform_version: ch.platformVersion || null,
+        user_agent_snip: uaHeader ? String(uaHeader).slice(0, 240) : null,
       };
     };
 
@@ -349,8 +379,14 @@ function attachWsProxy(server, options = {}) {
   } else {
     logger.info('WS login audit: disabled (set WS_LOGIN_AUDIT_PATH or WS_LOGIN_AUDIT=1)');
   }
+  logger.info(
+    `WS proxy ua gate: emulator=${process.env.WS_UA_EMULATOR_BLOCK !== 'false'} desktop=${process.env.WS_UA_DESKTOP_BLOCK !== 'false'} loginOnly=${process.env.WS_UA_GATE_LOGIN_ONLY !== 'false'}`
+  );
+  logger.info(
+    `WS proxy rate limit login: enabled=${loginRateLimit.enabled} max=${loginRateLimit.maxAttempts}/${loginRateLimit.windowMs}ms`
+  );
 
-  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics, loginAudit };
+  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics, loginAudit, loginRateLimit };
 }
 
 module.exports = {
