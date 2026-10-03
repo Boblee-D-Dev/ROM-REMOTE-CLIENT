@@ -46,11 +46,32 @@ JSONL field `turnstile_enforced` = Turnstile was required on this login-port con
 
 **QA (LOG-6):** PWA login once → one JSONL line with matching `game_id` and `client_ipv4` ≠ proxy egress (`218`). Char/map WS must not append login lines.
 
+### WSS access log (`ws-access.jsonl`, ALOG)
+
+When `WS_ACCESS_LOG=1` or `WS_ACCESS_LOG_PATH` is set, wsProxy appends one JSONL line per **WSS upgrade attempt** that reaches Node (after nginx): `outcome` `allowed` | `blocked`, `http_status`, `block_reason`, `login_id` (from query `login-id` / `game-id`), client IP fields, truncated UA, Sec-CH fields, `ch_mobile_query`, `turnstile_query_present` (boolean only), `origin`, `ws_target`, `target_port`. **Never** logs Turnstile token value.
+
+Default path: `./logs/ws-access.jsonl`. Default **`WS_ACCESS_LOG_LOGIN_ONLY=true`** — login port (6900) upgrades only; set `false` to include char/map (6121/5121).
+
+**Ops**
+
+- Same permissions/rotation as login audit (`chmod 640`, ~90 days).
+- PM2 startup log must show `WS access log: enabled path=...`.
+- **nginx:** `moon_proxy_track` JSON `access_log` + `conf.d/moon-proxy-track-log-format.conf` (edge UA/CH even when Node rejects) — installed by `sync-nginx.sh` on proxy deploy.
+- **Play client 1.3.99:** `login-id=` + `ch-mobile` on login WSS (TAB client; deploy with proxy batch).
+
+Example (blocked Android tablet at CH gate):
+
+```bash
+jq -r 'select(.outcome=="blocked") | [.ts,.block_reason,.login_id,.sec_ch_mobile,.user_agent_snip] | @tsv' logs/ws-access.jsonl | tail -20
+```
+
+Backlog: [`rom-server/docs/play-proxy-access-log-android-tablet-backlog.md`](../../rom-server/docs/play-proxy-access-log-android-tablet-backlog.md).
+
 ### Client Hints (Proxy #1–4)
 
 - **nginx:** `Accept-CH` + `Critical-CH` on `proxy.moon-ro.com` (reload after deploy).
 - **Node:** `/health` returns the same `Accept-CH` headers with CORS for allowed origins (`WS_ALLOWED_ORIGINS`) so `/play` can warm hints before WSS.
-- **Enforce:** `WS_CLIENT_HINTS_ENFORCE=true`, `WS_CLIENT_HINTS_LOGIN_ONLY=true`, `WS_CLIENT_HINTS_REQUIRE=true` — blocks `?0` on login WSS; requires `ch-mobile` query (official play) or mobile UA fallback; iPad/tablet exception.
+- **Enforce:** `WS_CLIENT_HINTS_ENFORCE=true`, `WS_CLIENT_HINTS_LOGIN_ONLY=true`, `WS_CLIENT_HINTS_REQUIRE=true` — blocks `?0` on login WSS; requires `ch-mobile` query (official play) or mobile UA fallback; iPad + **Android tablet** exception; **ARM + Desktop site** (`Linux x86_64` UA + Turnstile + play `ch-mobile=?1` merge) — see `docs/play-proxy-access-log-android-tablet-backlog.md` TAB.
 - **Metrics:** PM2 log lines `blocked_desktop_ch` (403 before Turnstile verify).
 - **Play client:** `WebSocket.js` GET `https://proxy.moon-ro.com/health` once per session before login WSS (play **1.3.78+**).
 

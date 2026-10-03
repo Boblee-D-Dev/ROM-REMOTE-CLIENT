@@ -15,6 +15,7 @@
  *   WS_ALLOWED_ORIGINS            browser Origin allowlist
  *   WS_REWRITE_LOGIN_PACKET       0x0888 → 0x0825 on login port
  *   WS_LOGIN_PORT                 default 6900
+ *   WS_ACCESS_LOG / WS_ACCESS_LOG_PATH   WSS upgrade JSONL (allowed + blocked)
  *   WS_METRICS_INTERVAL_MS        snapshot log interval (default 60000)
  *   WS_METRICS_HISTORY_FILE       jsonl path (default ./logs/ws-metrics.jsonl)
  *

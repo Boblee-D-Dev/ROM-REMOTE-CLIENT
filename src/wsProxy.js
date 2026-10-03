@@ -11,6 +11,7 @@ const {
   parseWsTargetPath,
 } = require('./wsProxyTurnstile');
 const { createLoginAuditLogger } = require('./wsProxyLoginAudit');
+const { createAccessLogger } = require('./wsProxyAccessLog');
 const { evaluateClientHints } = require('./wsProxyClientHints');
 const { resolveClientHints } = require('./wsProxyClientHintCache');
 const { evaluateUserAgentGate } = require('./wsProxyUserAgent');
@@ -139,13 +140,59 @@ function attachWsProxy(server, options = {}) {
   const loginAudit =
     options.loginAudit ||
     createLoginAuditLogger({ auditPath: process.env.WS_LOGIN_AUDIT_PATH });
+  const accessLog =
+    options.accessLog ||
+    createAccessLogger({
+      accessPath: process.env.WS_ACCESS_LOG_PATH,
+      loginPort: LOGIN_PORT,
+    });
   const loginRateLimit = options.loginRateLimit || createRateLimiter();
   const wss = new WebSocket.Server({ noServer: true });
 
-  function rejectUpgrade(socket, statusLine, logMsg) {
+  /**
+   * @param {import('net').Socket} socket
+   * @param {string} statusLine
+   * @param {string} logMsg
+   * @param {import('http').IncomingMessage} [req]
+   * @param {object} [accessCtx]
+   */
+  function rejectUpgrade(socket, statusLine, logMsg, req, accessCtx) {
     logger.warn(logMsg);
+    if (req && accessCtx && accessLog.enabled) {
+      const statusMatch = /HTTP\/1\.1 (\d{3})/.exec(statusLine);
+      accessLog.logUpgrade(req, {
+        ...accessCtx,
+        outcome: 'blocked',
+        http_status: statusMatch ? parseInt(statusMatch[1], 10) : 403,
+      });
+    }
     socket.write(`${statusLine}\r\nConnection: close\r\n\r\n`);
     socket.destroy();
+  }
+
+  function allowUpgrade(req, socket, head, accessCtx) {
+    if (accessLog.enabled) {
+      accessLog.logUpgrade(req, {
+        ...accessCtx,
+        outcome: 'allowed',
+        http_status: 101,
+        block_reason: null,
+      });
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  }
+
+  function upgradeAccessCtx(req, clientIp, parsedTarget, hints) {
+    const targetPort = parsedTarget ? parsedTarget.targetPort : null;
+    const wsTarget = parsedTarget ? parsedTarget.target : null;
+    return {
+      targetPort,
+      ws_target: wsTarget,
+      clientIp,
+      hints: hints || {},
+    };
   }
 
   server.on('upgrade', (req, socket, head) => {
@@ -155,20 +202,44 @@ function attachWsProxy(server, options = {}) {
     }
 
     const origin = req.headers.origin;
+    const upgradeClientIp = resolveClientIp(req);
+    const parsedTargetEarly = parseWsTargetPath(req.url);
+    const hintsEarly = resolveClientHints(req, upgradeClientIp);
+
     if (!isAllowedOrigin(origin, ALLOWED_ORIGINS)) {
-      rejectUpgrade(socket, 'HTTP/1.1 403 Forbidden', `WS proxy blocked origin: ${origin || '(none)'}`);
+      rejectUpgrade(
+        socket,
+        'HTTP/1.1 403 Forbidden',
+        `WS proxy blocked origin: ${origin || '(none)'}`,
+        req,
+        {
+          ...upgradeAccessCtx(req, upgradeClientIp, parsedTargetEarly, hintsEarly),
+          block_reason: 'origin_forbidden',
+        }
+      );
       return;
     }
 
-    const parsedTarget = parseWsTargetPath(req.url);
+    const parsedTarget = parsedTargetEarly;
     if (!parsedTarget) {
-      rejectUpgrade(socket, 'HTTP/1.1 400 Bad Request', `WS proxy rejected malformed upgrade url: ${req.url}`);
+      rejectUpgrade(
+        socket,
+        'HTTP/1.1 400 Bad Request',
+        `WS proxy rejected malformed upgrade url: ${req.url}`,
+        req,
+        {
+          targetPort: null,
+          ws_target: null,
+          clientIp: upgradeClientIp,
+          hints: hintsEarly,
+          block_reason: 'malformed_url',
+        }
+      );
       return;
     }
 
     const { target, targetPort } = parsedTarget;
-    const upgradeClientIp = resolveClientIp(req);
-    const clientHints = resolveClientHints(req, upgradeClientIp);
+    const clientHints = hintsEarly;
 
     const chResult = evaluateClientHints(
       req,
@@ -186,7 +257,12 @@ function attachWsProxy(server, options = {}) {
       rejectUpgrade(
         socket,
         'HTTP/1.1 403 Forbidden',
-        `WS proxy blocked client-hints target=${target} reason=${chResult.reason || 'desktop_ch'} mobile=${chResult.hints.mobile || '(none)'}`
+        `WS proxy blocked client-hints target=${target} reason=${chResult.reason || 'desktop_ch'} mobile=${chResult.hints.mobile || '(none)'}`,
+        req,
+        {
+          ...upgradeAccessCtx(req, upgradeClientIp, parsedTarget, chResult.hints),
+          block_reason: chResult.reason || 'desktop_ch',
+        }
       );
       return;
     }
@@ -206,7 +282,12 @@ function attachWsProxy(server, options = {}) {
       rejectUpgrade(
         socket,
         'HTTP/1.1 403 Forbidden',
-        `WS proxy blocked ua target=${target} reason=${reason} ua=${(req.headers['user-agent'] || '').slice(0, 120)}`
+        `WS proxy blocked ua target=${target} reason=${reason} ua=${(req.headers['user-agent'] || '').slice(0, 120)}`,
+        req,
+        {
+          ...upgradeAccessCtx(req, upgradeClientIp, parsedTarget, clientHints),
+          block_reason: reason,
+        }
       );
       return;
     }
@@ -220,17 +301,22 @@ function attachWsProxy(server, options = {}) {
         rejectUpgrade(
           socket,
           'HTTP/1.1 429 Too Many Requests',
-          `WS proxy rate limit ip=${upgradeClientIp} count=${rl.count} limit=${rl.limit} target=${target}`
+          `WS proxy rate limit ip=${upgradeClientIp} count=${rl.count} limit=${rl.limit} target=${target}`,
+          req,
+          {
+            ...upgradeAccessCtx(req, upgradeClientIp, parsedTarget, clientHints),
+            block_reason: 'rate_limit',
+          }
         );
         return;
       }
     }
 
+    const accessCtxBase = upgradeAccessCtx(req, upgradeClientIp, parsedTarget, clientHints);
+
     const runVerify = async () => {
       if (!shouldEnforceTurnstile(targetPort, LOGIN_PORT)) {
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit('connection', ws, req);
-        });
+        allowUpgrade(req, socket, head, accessCtxBase);
         return;
       }
 
@@ -244,21 +330,29 @@ function attachWsProxy(server, options = {}) {
         rejectUpgrade(
           socket,
           'HTTP/1.1 403 Forbidden',
-          `WS proxy blocked turnstile target=${target} reason=${result.reason || 'unknown'}`
+          `WS proxy blocked turnstile target=${target} reason=${result.reason || 'unknown'}`,
+          req,
+          {
+            ...accessCtxBase,
+            block_reason: `turnstile_${result.reason || 'blocked'}`,
+          }
         );
         return;
       }
 
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req);
-      });
+      allowUpgrade(req, socket, head, accessCtxBase);
     };
 
     runVerify().catch((err) => {
       rejectUpgrade(
         socket,
         'HTTP/1.1 503 Service Unavailable',
-        `WS proxy turnstile verify error: ${err.message}`
+        `WS proxy turnstile verify error: ${err.message}`,
+        req,
+        {
+          ...accessCtxBase,
+          block_reason: 'turnstile_verify_error',
+        }
       );
     });
   });
@@ -379,6 +473,13 @@ function attachWsProxy(server, options = {}) {
   } else {
     logger.info('WS login audit: disabled (set WS_LOGIN_AUDIT_PATH or WS_LOGIN_AUDIT=1)');
   }
+  if (accessLog.enabled) {
+    logger.info(
+      `WS access log: enabled path=${accessLog.accessPath} loginOnly=${accessLog.loginOnly}`
+    );
+  } else {
+    logger.info('WS access log: disabled (set WS_ACCESS_LOG=1 or WS_ACCESS_LOG_PATH)');
+  }
   logger.info(
     `WS proxy ua gate: emulator=${process.env.WS_UA_EMULATOR_BLOCK !== 'false'} desktop=${process.env.WS_UA_DESKTOP_BLOCK !== 'false'} loginOnly=${process.env.WS_UA_GATE_LOGIN_ONLY !== 'false'}`
   );
@@ -386,7 +487,7 @@ function attachWsProxy(server, options = {}) {
     `WS proxy rate limit login: enabled=${loginRateLimit.enabled} max=${loginRateLimit.maxAttempts}/${loginRateLimit.windowMs}ms`
   );
 
-  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics, loginAudit, loginRateLimit };
+  return { wss, ALLOWED_TARGETS, ALLOWED_ORIGINS, metrics, loginAudit, accessLog, loginRateLimit };
 }
 
 module.exports = {
@@ -397,6 +498,7 @@ module.exports = {
   rewriteLoginPacket,
   createMetrics,
   createLoginAuditLogger,
+  createAccessLogger,
   PACKET_CA_SSO_LOGIN_REQ,
   PACKET_CA_SSO_LOGIN_REQ_ROBROWSER,
   DEFAULT_ALLOWED_ORIGINS,

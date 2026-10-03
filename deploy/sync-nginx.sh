@@ -31,6 +31,7 @@ REMOTE
 		;;
 	proxy)
 		log_step "Installing nginx proxy site on $SSH_TARGET"
+		scp "$SCRIPT_DIR/nginx/moon-proxy-track-log-format.conf" "$SSH_TARGET:/etc/nginx/conf.d/moon-proxy-track-log-format.conf"
 		envsubst "$SUBST_VARS" < "$SCRIPT_DIR/nginx/proxy.moon-ro.com.conf.template" > "$TMP/proxy.moon-ro.com"
 		scp "$TMP/proxy.moon-ro.com" "$SSH_TARGET:/etc/nginx/sites-available/proxy.moon-ro.com"
 		ssh_run "bash -s" <<'REMOTE'

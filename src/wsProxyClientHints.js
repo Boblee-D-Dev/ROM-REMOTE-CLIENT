@@ -7,9 +7,6 @@ function envFlag(name, defaultWhenSet) {
 }
 
 /**
- * @param {import('http').IncomingMessage} req
- */
-/**
  * Client sends ch-mobile from navigator.userAgentData.mobile (Chrome PWA) when wire CH is missing.
  *
  * @param {import('http').IncomingMessage} req
@@ -79,6 +76,67 @@ function isTabletClientHint(ch) {
 }
 
 /**
+ * Chrome "Desktop site" on ARM — wire UA is Linux x86_64 without Android.
+ *
+ * @param {string|undefined} ua
+ */
+function isLinuxX86DesktopClassUa(ua) {
+  if (!ua || typeof ua !== 'string') return false;
+  if (/Android/i.test(ua)) return false;
+  if (/Windows NT|CrOS/i.test(ua)) return false;
+  return /X11; Linux x86_64|X11; Linux i686|Linux x86_64/i.test(ua);
+}
+
+/**
+ * @param {{ platform?: string }} ch
+ */
+function isLinuxOrAndroidChPlatform(ch) {
+  const platform = String(ch?.platform || '').replace(/"/g, '').trim();
+  return platform === 'Linux' || platform === 'Android';
+}
+
+/**
+ * Android tablet often sends Sec-CH-UA-Mobile ?0 (same as iPad).
+ *
+ * @param {{ platform?: string }} ch
+ * @param {string} ua
+ */
+function isAndroidTabletClientHint(ch, ua) {
+  const platform = String(ch?.platform || '').replace(/"/g, '').trim();
+  if (platform !== 'Android') return false;
+  if (/Android/i.test(ua) && /Mobile/i.test(ua)) return false;
+  return true;
+}
+
+/**
+ * @param {import('http').IncomingMessage} req
+ */
+function readTurnstileQueryPresent(req) {
+  try {
+    const parsed = new URL(req.url || '', 'http://ws-proxy.local');
+    return parsed.searchParams.has('cf-turnstile-response');
+  } catch {
+    return false;
+  }
+}
+
+/** Set by play device-gate for real ARM + desktop-site only (not emulators). */
+const ARM_DESKTOP_SITE_PROFILE = 'arm-desktop-site';
+
+/**
+ * @param {import('http').IncomingMessage} req
+ */
+function readArmDesktopSiteProfile(req) {
+  try {
+    const parsed = new URL(req.url || '', 'http://ws-proxy.local');
+    const v = parsed.searchParams.get('moon-ch-profile');
+    return v === ARM_DESKTOP_SITE_PROFILE;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {number} targetPort
  * @param {number} loginPort
  */
@@ -136,6 +194,17 @@ function evaluateClientHints(req, ctx, hintsOverride) {
     if (isTabletClientHint(hints) || isTabletUserAgent(ua)) {
       return { block: false, reason: 'tablet_exception', hints };
     }
+    if (isAndroidTabletClientHint(hints, ua)) {
+      return { block: false, reason: 'android_tablet_exception', hints };
+    }
+    if (
+      isLinuxX86DesktopClassUa(ua) &&
+      isLinuxOrAndroidChPlatform(hints) &&
+      readTurnstileQueryPresent(req) &&
+      readArmDesktopSiteProfile(req)
+    ) {
+      return { block: false, reason: 'arm_linux_turnstile_ch0_exception', hints };
+    }
     return { block: true, reason: 'desktop_ch', hints };
   }
 
@@ -159,6 +228,12 @@ module.exports = {
   isTabletUserAgent,
   mobileHintFromUserAgent,
   isTabletClientHint,
+  isLinuxX86DesktopClassUa,
+  isLinuxOrAndroidChPlatform,
+  isAndroidTabletClientHint,
+  readTurnstileQueryPresent,
+  readArmDesktopSiteProfile,
+  ARM_DESKTOP_SITE_PROFILE,
   shouldEnforceClientHints,
   evaluateClientHints,
   clientHintResponseHeaders,
